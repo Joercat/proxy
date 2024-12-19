@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Simple Proxy</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 20px;
+            padding: 20px;
+            background-color: #f4f4f4;
+        }
+        h1 {
+            color: #333;
+        }
+        form {
+            margin-bottom: 20px;
+        }
+        input[type="text"] {
+            width: 300px;
+            padding: 10px;
+            margin-right: 10px;
+        }
+        input[type="submit"] {
+            padding: 10px 15px;
+        }
+    </style>
+</head>
+<body>
+    <h1>Simple Proxy Server</h1>
+    <form id="proxyForm">
+        <input type="text" id="url" placeholder="Enter URL (e.g., http://example.com)" required>
+        <input type="submit" value="Proxy">
+    </form>
+    <iframe id="proxyFrame" style="width: 100%; height: 600px; border: none;"></iframe>
+
+    <script>
+        document.getElementById('proxyForm').onsubmit = function(event) {
+            event.preventDefault();
+            const url = document.getElementById('url').value;
+            const frame = document.getElementById('proxyFrame');
+            frame.src = `http://localhost:3000/${url}`;
+        };
+    </script>
+</body>
+</html>
