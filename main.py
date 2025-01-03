@@ -1,27 +1,29 @@
-from flask import Flask, request, jsonify, make_response
+from flask import Flask, request, make_response, send_from_directory
 import requests
 
 app = Flask(__name__)
 
 @app.route('/')
 def home():
-    with open('index.html') as f:
-        return f.read()
+    # Serve the HTML file
+    return send_from_directory('.', 'index.html')
 
 @app.route('/proxy')
 def proxy():
     url = request.args.get('url')
-    if not url:
-        return "No URL provided", 400
     
-    # Basic URL validation to avoid open redirects
+    # Check if the URL parameter is provided
+    if not url:
+        return make_response("No URL provided", 400)
+    
+    # Basic URL validation to ensure it's a valid http or https URL
     if not (url.startswith("http://") or url.startswith("https://")):
-        return "Invalid URL. Please use a valid http or https URL.", 400
+        return make_response("Invalid URL. Please use a valid http or https URL.", 400)
 
-    # Try to fetch the URL content
+    # Attempt to fetch the URL content
     try:
         response = requests.get(url, timeout=10)
-        
+
         # Create a response with CORS headers
         cors_headers = {
             "Access-Control-Allow-Origin": "*",
@@ -29,17 +31,17 @@ def proxy():
             "Access-Control-Allow-Headers": "Content-Type",
         }
         
-        # Create a new response object
+        # Create a new response object and set the necessary headers
         proxy_response = make_response(response.content)
         proxy_response.headers.update(cors_headers)
         proxy_response.headers['Content-Type'] = response.headers.get('Content-Type', 'text/html')
-        
+
         return proxy_response
 
     except requests.Timeout:
-        return "Request timed out. The URL may be unreachable.", 504
+        return make_response("Request timed out. The URL may be unreachable.", 504)
     except requests.RequestException as e:
-        return f"An error occurred: {str(e)}", 500
+        return make_response(f"An error occurred: {str(e)}", 500)
 
 if __name__ == '__main__':
     app.run(debug=True)
