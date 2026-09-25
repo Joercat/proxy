@@ -1,0 +1,14 @@
+{
+  "name": "web-relay",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Standalone URL-rewriting web relay. Deploy to Cloudflare Workers, Deno Deploy, or Node 18+.",
+  "type": "module",
+  "main": "relay.js",
+  "scripts": {
+    "start": "node node-server.js"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
