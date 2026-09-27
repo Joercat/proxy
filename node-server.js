@@ -1,33 +1,31 @@
 /**
  * Node 18+ adapter for the relay.
  *
- * The relay itself lives in relay.js and speaks the standard Web `Request`/
- * `Response` API, which is exactly what Cloudflare Workers and Deno Deploy hand
- * you. This file only translates Node's `http` objects to and from that API, so
- * all three targets run byte-identical proxy logic — there is no second
- * implementation to keep in sync.
+ * relay.js speaks the Web Request/Response API, which is what Cloudflare Workers
+ * and Deno Deploy hand you. This file only translates Node's http objects to and
+ * from that API — plus one thing the other platforms do for us and Node does not:
+ * a raw WebSocket tunnel, so live pages (chat, dashboards, presence) work here
+ * too. All proxy logic lives in relay.js; nothing is duplicated.
  *
- *   node relay/node-server.js                 # http://0.0.0.0:8080
+ *   node relay/node-server.js
  *   PORT=3000 node relay/node-server.js
  *   ACCESS_KEY=letmein node relay/node-server.js
  *   BLOCK_HOSTS=example.com,internal.corp node relay/node-server.js
- *
- * Node-specific extras over the Workers/Deno build:
- *   • a real DNS resolver, so a hostname that resolves into private space
- *     (rebinding) is refused before we fetch it
- *   • Content-Length is emitted where it is known, for accurate progress bars
  */
 
 import http from 'node:http';
+import net from 'node:net';
+import tls from 'node:tls';
 import { Readable } from 'node:stream';
 import dns from 'node:dns/promises';
 
-import relay, { setDnsResolver } from './relay.js';
+import relay, { setDnsResolver, guardTarget, decodeUrl, CONFIG, isPrivateAddress } from './relay.js';
 
 const PORT = Number(process.env.PORT || 8080);
 const HOST = process.env.HOST || '0.0.0.0';
 
-/* Give the guard a DNS resolver: returns every address a name points at. */
+/* Real DNS resolution before fetching, so a hostname pointing into private
+   space (DNS rebinding) is refused rather than fetched. */
 setDnsResolver(async (hostname) => {
   const records = await dns.lookup(hostname, { all: true, verbatim: true });
   return records.map((r) => r.address);
@@ -36,9 +34,10 @@ setDnsResolver(async (hostname) => {
 const env = {
   ACCESS_KEY: process.env.ACCESS_KEY || undefined,
   BLOCK_HOSTS: process.env.BLOCK_HOSTS || undefined,
+  // hosts you own that live on a private network (a NAS, a router, a dev box)
+  ALLOW_HOSTS: process.env.ALLOW_HOSTS || undefined,
 };
 
-/** Minimal shims for the globals Workers provides but older Node builds may not. */
 if (typeof AbortSignal.timeout !== 'function') {
   AbortSignal.timeout = (ms) => {
     const ctl = new AbortController();
@@ -47,11 +46,13 @@ if (typeof AbortSignal.timeout !== 'function') {
   };
 }
 
-/** Node IncomingMessage -> Web Request. */
+/* ------------------------------------------------------------------ *
+ *  HTTP: Node request -> Web Request, Web Response -> Node response
+ * ------------------------------------------------------------------ */
+
 function toWebRequest(req) {
-  const scheme = 'http';
   const host = req.headers.host || 'localhost';
-  const url = scheme + '://' + host + (req.url || '/');
+  const url = 'http://' + host + (req.url || '/');
 
   const headers = new Headers();
   for (const [key, value] of Object.entries(req.headers)) {
@@ -68,7 +69,6 @@ function toWebRequest(req) {
   return new Request(url, init);
 }
 
-/** Web Response -> whatever Node needs on the wire. */
 async function sendWebResponse(webResponse, res) {
   const headers = {};
   let cookieLines = null;
@@ -76,51 +76,4 @@ async function sendWebResponse(webResponse, res) {
     if (typeof webResponse.headers.getSetCookie === 'function') cookieLines = webResponse.headers.getSetCookie();
   } catch { /* ignore */ }
 
-  for (const [key, value] of webResponse.headers) {
-    if (key.toLowerCase() === 'set-cookie') continue;   // handled as an array below
-    headers[key] = value;
-  }
-  if (cookieLines && cookieLines.length) headers['set-cookie'] = cookieLines;
 
-  res.writeHead(webResponse.status, headers);
-  if (!webResponse.body) return res.end();
-  Readable.fromWeb(webResponse.body).pipe(res);
-}
-
-const server = http.createServer((req, res) => {
-  let webRequest;
-  try {
-    webRequest = toWebRequest(req);
-  } catch (err) {
-    res.writeHead(400, { 'content-type': 'text/plain' });
-    return res.end('Bad request: ' + err.message);
-  }
-
-  const abort = new AbortController();
-  res.on('close', () => { if (!res.writableEnded) abort.abort(); });   // browser hit Stop
-
-  relay.fetch(webRequest, env, { waitUntil: () => {} })
-    .then((webResponse) => sendWebResponse(webResponse, res))
-    .catch((err) => {
-      if (res.headersSent) return res.end();
-      res.writeHead(502, { 'content-type': 'text/plain; charset=utf-8' });
-      res.end('Relay failure: ' + ((err && err.message) || err));
-    });
-});
-
-server.listen(PORT, HOST, () => {
-  console.log('[relay] listening on http://' + HOST + ':' + PORT);
-  console.log('[relay] proxied pages:  /__p/<base64url>');
-  console.log('[relay] passthrough:    /raw?url=<absolute url>');
-  console.log('[relay] diagnostics:    /__probe?url=<absolute url>   health: /__health');
-  console.log('[relay] status page:    /');
-  if (env.ACCESS_KEY) console.log('[relay] ACCESS_KEY is set: every request needs ?key=…');
-  if (env.BLOCK_HOSTS) console.log('[relay] BLOCK_HOSTS: ' + env.BLOCK_HOSTS);
-});
-
-server.on('clientError', (err, socket) => {
-  try { socket.end('HTTP/1.1 400 Bad Request\r\n\r\n'); } catch { /* ignore */ }
-});
-
-process.on('SIGTERM', () => server.close(() => process.exit(0)));
-process.on('SIGINT', () => server.close(() => process.exit(0)));
