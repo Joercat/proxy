@@ -1431,7 +1431,11 @@ function buildUpstreamHeaders(request, target, jar, accessKey, cookieString) {
     headers.set('sec-fetch-dest', request.headers.get('sec-fetch-dest') || 'document');
   }
   // Form posts need a same-origin Origin or many CSRF filters reject them.
-  if (nonGet && !headers.has('origin')) headers.set('origin', dest.origin);
+  // Always set it to the destination for POST/PUT/PATCH/DELETE to match what the
+  // browser would send if the page were served from that origin directly.
+  if (nonGet) headers.set('origin', dest.origin);
+  // Also ensure Referer is set for POSTs — Instagram checks it for CSRF.
+  if (nonGet && !headers.has('referer')) headers.set('referer', dest.origin + '/');
 
   headers.set('upgrade-insecure-requests', '1');
 
@@ -1445,9 +1449,16 @@ function buildUpstreamHeaders(request, target, jar, accessKey, cookieString) {
   if (auth) headers.set('authorization', auth);                 // HTTP Basic/Bearer survive
   const ctype = request.headers.get('content-type');
   if (ctype) headers.set('content-type', ctype);
+  /* Instagram login: ensure x-csrftoken, x-ig-www-claim, x-asbd-id are forwarded.
+     The general loop below already forwards everything not in SKIP, but some
+     sites gate login on these specific names — make sure they are never dropped. */
   const xsrf = request.headers.get('x-xsrf-token') || request.headers.get('x-csrf-token') || request.headers.get('x-csrftoken');
-  if (xsrf) headers.set('x-xsrf-token', xsrf);
-  /* Instagram also checks x-ig-www-claim and x-asbd-id — forward them as-is */
+  if (xsrf) {
+    /* Forward under the exact name Instagram expects */
+    if (request.headers.has('x-csrftoken')) headers.set('x-csrftoken', xsrf);
+    else if (request.headers.has('x-csrf-token')) headers.set('x-csrf-token', xsrf);
+    else if (request.headers.has('x-xsrf-token')) headers.set('x-xsrf-token', xsrf);
+  }
   const igClaim = request.headers.get('x-ig-www-claim');
   if (igClaim) headers.set('x-ig-www-claim', igClaim);
   const asbd = request.headers.get('x-asbd-id');
