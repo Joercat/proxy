@@ -1478,11 +1478,14 @@ function buildUpstreamHeaders(request, target, jar, accessKey, cookieString) {
       if (csrfMatch && !headers.has('x-csrftoken')) {
         headers.set('x-csrftoken', csrfMatch[1]);
       }
-      /* Also try to forward sessionid from jar if present */
-      const sessionMatch = jarCookies.match(/sessionid=([^;\s]+)/);
-      if (sessionMatch && !jarCookies.includes('sessionid=')) {
-        /* If jar has sessionid but it's not in the cookie string being sent, add it */
-        /* Actually jarHeader already includes all matching cookies, so this shouldn't be needed */
+      /* Instagram also checks x-ig-www-claim header */
+      if (!headers.has('x-ig-www-claim')) {
+        /* Try to extract from jar or generate a placeholder */
+        /* For now, forward it if the page set it */
+        const igClaim = request.headers.get('x-ig-www-claim');
+        if (igClaim) {
+          headers.set('x-ig-www-claim', igClaim);
+        }
       }
     }
   }
@@ -2455,7 +2458,7 @@ function html(body, status, cookies) {
    never be served at one of them. */
 const RESERVED_PATHS = new Set([
   '/', '/go', '/p', '/__p', '/watch', '/raw', '/preview', '/__probe', '/__tabs',
-  '/__home', '/__health', '/favicon.ico', '/favicon.png', '/robots.txt',
+  '/__home', '/__health', '/__debug', '/favicon.ico', '/favicon.png', '/robots.txt',
 ]);
 
 function isCleanHost(hostname, env) {
