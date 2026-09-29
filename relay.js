@@ -54,10 +54,6 @@
  * 1. Configuration
  * ========================================================================== */
 
-// ==== TEMP DEBUG: Instagram login diagnostics ====
-const DEBUG_LOG = [];
-
-
 export const CONFIG = {
   prefix: '/__p/',
   prettyPrefix: '/p/',
@@ -1432,18 +1428,8 @@ function buildUpstreamHeaders(request, target, jar, accessKey, cookieString) {
     headers.set('sec-fetch-mode', request.headers.get('sec-fetch-mode') || 'navigate');
     headers.set('sec-fetch-dest', request.headers.get('sec-fetch-dest') || 'document');
   } else {
-    /* No upstream referer from the relay, but check the raw Referer header.
-       If it's same-origin, use 'same-origin'; otherwise 'cross-site'. */
-    const rawReferer = request.headers.get('referer');
-    let fetchSite = 'none';
-    if (rawReferer) {
-      try {
-        const r = new URL(rawReferer);
-        fetchSite = r.hostname === dest.hostname ? 'same-origin' : 'cross-site';
-      } catch (e) { /* leave as 'none' */ }
-    }
-    headers.set('sec-fetch-site', fetchSite);
-    headers.set('sec-fetch-mode', request.headers.get('sec-fetch-mode') || 'navigate');
+    headers.set('sec-fetch-site', 'none');
+    headers.set('sec-fetch-mode', 'navigate');
     headers.set('sec-fetch-dest', request.headers.get('sec-fetch-dest') || 'document');
   }
   // Form posts need a same-origin Origin or many CSRF filters reject them.
@@ -1452,18 +1438,6 @@ function buildUpstreamHeaders(request, target, jar, accessKey, cookieString) {
   if (nonGet) headers.set('origin', dest.origin);
   // Also ensure Referer is set for POSTs — Instagram checks it for CSRF.
   if (nonGet && !headers.has('referer')) headers.set('referer', dest.origin + '/');
-  
-  /* Instagram login: if the page failed to set x-csrftoken, try to extract it from
-     the jar's csrftoken cookie and add it as a header. */
-  if (dest.hostname.includes('instagram.com') && nonGet) {
-    const jarCsrf = jarHeader(jar, dest.hostname, dest.pathname, true);
-    if (jarCsrf) {
-      const csrfMatch = jarCsrf.match(/csrftoken=([^;\s]+)/);
-      if (csrfMatch && !headers.has('x-csrftoken')) {
-        headers.set('x-csrftoken', csrfMatch[1]);
-      }
-    }
-  }
 
   headers.set('upgrade-insecure-requests', '1');
 
@@ -1500,17 +1474,6 @@ function buildUpstreamHeaders(request, target, jar, accessKey, cookieString) {
      login failure looks like from the outside. So: deny plumbing, forward the
      rest. The browser's own User-Agent goes through too (with its matching
      client hints), because the site compares those against each other. */
-  /* TEMP: log Instagram requests for diagnostics */
-  if (dest.hostname.includes('instagram.com')) {
-    DEBUG_LOG.push({
-      method: request.method,
-      url: target,
-      headersSentToInstagram: Object.fromEntries(headers.entries()),
-      cookiesFromBrowserToRelay: request.headers.get('cookie'),
-      jarCookiesSentToInstagram: jarHeader(jar, dest.hostname, dest.pathname, true)
-    });
-    if (DEBUG_LOG.length > 5) DEBUG_LOG.shift();
-  }
   const SKIP = new Set([
     'host', 'connection', 'keep-alive', 'content-length', 'cookie', 'origin', 'referer',
     'user-agent', 'accept', 'accept-language', 'accept-encoding', 'range',
@@ -1775,10 +1738,6 @@ export default {
     const url = new URL(request.url);
 
     try {
-      /* TEMP: debug endpoint */
-      const debugResp = debugHandler(request, env);
-      if (debugResp) return debugResp;
-      
       if (url.pathname === '/__health') {
         return new Response('ok', { headers: { 'content-type': 'text/plain', 'cache-control': 'no-store' } });
       }
@@ -2647,17 +2606,5 @@ function errorPage(status, message, target) {
     + (target && isHttpUrl(target) ? '<p><a href="' + escapeHtml(encodeUrl(target)) + '">Retry through the relay</a></p>' : '')
     + '<p><a href="/">Relay start page</a></p></div></body></html>';
 }
-
-/* ==== TEMP DEBUG ENDPOINT ==== */
-function debugHandler(request, env) {
-  const url = new URL(request.url);
-  if (url.pathname !== '/__debug') return null;
-  const last = url.searchParams.has('last') ? DEBUG_LOG[DEBUG_LOG.length - 1] : DEBUG_LOG;
-  return new Response(JSON.stringify(last, null, 2), {
-    headers: { 'content-type': 'application/json', 'cache-control': 'no-store' }
-  });
-}
-
-/* ============================== */
 
 /* __RELAY_EOF__ */
