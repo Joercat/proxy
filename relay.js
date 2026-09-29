@@ -54,6 +54,10 @@
  * 1. Configuration
  * ========================================================================== */
 
+// ==== TEMP DEBUG: Instagram login diagnostics ====
+const DEBUG_LOG = [];
+
+
 export const CONFIG = {
   prefix: '/__p/',
   prettyPrefix: '/p/',
@@ -1423,7 +1427,9 @@ function buildUpstreamHeaders(request, target, jar, accessKey, cookieString) {
     headers.set('referer', upstreamRef);
     headers.set('origin', new URL(upstreamRef).origin);
     headers.set('sec-fetch-site', new URL(upstreamRef).hostname === dest.hostname ? 'same-origin' : 'cross-site');
-    headers.set('sec-fetch-mode', request.headers.get('sec-fetch-mode') || (nonGet ? 'cors' : 'navigate'));
+    /* For form submissions (POST/PUT/PATCH/DELETE) the browser sends 'navigate', not 'cors'.
+       'cors' is for fetch/XHR. Match what a real browser would send. */
+    headers.set('sec-fetch-mode', request.headers.get('sec-fetch-mode') || 'navigate');
     headers.set('sec-fetch-dest', request.headers.get('sec-fetch-dest') || 'document');
   } else {
     headers.set('sec-fetch-site', 'none');
@@ -1472,6 +1478,17 @@ function buildUpstreamHeaders(request, target, jar, accessKey, cookieString) {
      login failure looks like from the outside. So: deny plumbing, forward the
      rest. The browser's own User-Agent goes through too (with its matching
      client hints), because the site compares those against each other. */
+  /* TEMP: log Instagram requests for diagnostics */
+  if (dest.hostname.includes('instagram.com')) {
+    DEBUG_LOG.push({
+      method: request.method,
+      url: target,
+      headersSentToInstagram: Object.fromEntries(headers.entries()),
+      cookiesFromBrowserToRelay: request.headers.get('cookie'),
+      jarCookiesSentToInstagram: jarHeader(jar, dest.hostname, dest.pathname, true)
+    });
+    if (DEBUG_LOG.length > 5) DEBUG_LOG.shift();
+  }
   const SKIP = new Set([
     'host', 'connection', 'keep-alive', 'content-length', 'cookie', 'origin', 'referer',
     'user-agent', 'accept', 'accept-language', 'accept-encoding', 'range',
@@ -1736,6 +1753,10 @@ export default {
     const url = new URL(request.url);
 
     try {
+      /* TEMP: debug endpoint */
+      const debugResp = debugHandler(request, env);
+      if (debugResp) return debugResp;
+      
       if (url.pathname === '/__health') {
         return new Response('ok', { headers: { 'content-type': 'text/plain', 'cache-control': 'no-store' } });
       }
@@ -2604,5 +2625,17 @@ function errorPage(status, message, target) {
     + (target && isHttpUrl(target) ? '<p><a href="' + escapeHtml(encodeUrl(target)) + '">Retry through the relay</a></p>' : '')
     + '<p><a href="/">Relay start page</a></p></div></body></html>';
 }
+
+/* ==== TEMP DEBUG ENDPOINT ==== */
+function debugHandler(request, env) {
+  const url = new URL(request.url);
+  if (url.pathname !== '/__debug') return null;
+  const last = url.searchParams.has('last') ? DEBUG_LOG[DEBUG_LOG.length - 1] : DEBUG_LOG;
+  return new Response(JSON.stringify(last, null, 2), {
+    headers: { 'content-type': 'application/json', 'cache-control': 'no-store' }
+  });
+}
+
+/* ============================== */
 
 /* __RELAY_EOF__ */
