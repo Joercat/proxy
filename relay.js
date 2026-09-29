@@ -62,7 +62,7 @@ export const CONFIG = {
   maxRedirectHops: 1,                    // we hand redirects back to the browser
   userAgent:
     'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 ' +
-    '(KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36',
+    '(KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36',
   /* Single-page apps that decide what to render from location.pathname (TikTok,
      Instagram, …). Handing one of these a relay path makes their own router
      decide the page does not exist and show their 404 — so a page navigation for
@@ -1428,9 +1428,39 @@ function buildUpstreamHeaders(request, target, jar, accessKey, cookieString) {
     headers.set('sec-fetch-mode', request.headers.get('sec-fetch-mode') || 'navigate');
     headers.set('sec-fetch-dest', request.headers.get('sec-fetch-dest') || 'document');
   } else {
-    headers.set('sec-fetch-site', 'none');
-    headers.set('sec-fetch-mode', 'navigate');
-    headers.set('sec-fetch-dest', request.headers.get('sec-fetch-dest') || 'document');
+    /* No upstream referer from the relay, but check the raw Referer header.
+       If it's same-origin, use 'same-origin'; otherwise 'cross-site'.
+       For Instagram's XHR requests, the raw Referer is often the site's own origin. */
+    const rawReferer = request.headers.get('referer');
+    let fetchSite = 'none';
+    let fetchDest = request.headers.get('sec-fetch-dest');
+    let fetchMode = request.headers.get('sec-fetch-mode');
+    
+    if (rawReferer) {
+      try {
+        const r = new URL(rawReferer);
+        fetchSite = r.hostname === dest.hostname ? 'same-origin' : 'cross-site';
+      } catch (e) { /* leave as 'none' */ }
+    }
+    
+    /* For Instagram's Comet endpoints (/ajax/bz, /ajax/bulk-route-definitions/)
+       that are called via XHR/fetch, ensure correct sec-fetch headers.
+       These are same-origin requests and should have 'document' dest for
+       the initial navigation that loads the page, and 'empty' for subsequent
+       XHR calls — but Instagram checks for 'same-origin' site. */
+    if (dest.hostname.includes('instagram.com')) {
+      if (fetchSite === 'none' && rawReferer && rawReferer.includes('instagram.com')) {
+        fetchSite = 'same-origin';
+      }
+      /* For POST to Comet endpoints, ensure dest is correct */
+      if (nonGet && !fetchDest) {
+        fetchDest = 'empty';
+      }
+    }
+    
+    headers.set('sec-fetch-site', fetchSite);
+    headers.set('sec-fetch-mode', fetchMode || 'navigate');
+    headers.set('sec-fetch-dest', fetchDest || 'document');
   }
   // Form posts need a same-origin Origin or many CSRF filters reject them.
   // Always set it to the destination for POST/PUT/PATCH/DELETE to match what the
@@ -1438,6 +1468,24 @@ function buildUpstreamHeaders(request, target, jar, accessKey, cookieString) {
   if (nonGet) headers.set('origin', dest.origin);
   // Also ensure Referer is set for POSTs — Instagram checks it for CSRF.
   if (nonGet && !headers.has('referer')) headers.set('referer', dest.origin + '/');
+  
+  /* Instagram login: inject x-csrftoken from jar if page JS didn't set it.
+     Instagram's modern login uses XHR to /ajax/bz and expects this header. */
+  if (dest.hostname.includes('instagram.com') && nonGet) {
+    const jarCookies = jarHeader(jar, dest.hostname, dest.pathname, true);
+    if (jarCookies) {
+      const csrfMatch = jarCookies.match(/csrftoken=([^;\s]+)/);
+      if (csrfMatch && !headers.has('x-csrftoken')) {
+        headers.set('x-csrftoken', csrfMatch[1]);
+      }
+      /* Also try to forward sessionid from jar if present */
+      const sessionMatch = jarCookies.match(/sessionid=([^;\s]+)/);
+      if (sessionMatch && !jarCookies.includes('sessionid=')) {
+        /* If jar has sessionid but it's not in the cookie string being sent, add it */
+        /* Actually jarHeader already includes all matching cookies, so this shouldn't be needed */
+      }
+    }
+  }
 
   headers.set('upgrade-insecure-requests', '1');
 
