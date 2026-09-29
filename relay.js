@@ -1432,8 +1432,18 @@ function buildUpstreamHeaders(request, target, jar, accessKey, cookieString) {
     headers.set('sec-fetch-mode', request.headers.get('sec-fetch-mode') || 'navigate');
     headers.set('sec-fetch-dest', request.headers.get('sec-fetch-dest') || 'document');
   } else {
-    headers.set('sec-fetch-site', 'none');
-    headers.set('sec-fetch-mode', 'navigate');
+    /* No upstream referer from the relay, but check the raw Referer header.
+       If it's same-origin, use 'same-origin'; otherwise 'cross-site'. */
+    const rawReferer = request.headers.get('referer');
+    let fetchSite = 'none';
+    if (rawReferer) {
+      try {
+        const r = new URL(rawReferer);
+        fetchSite = r.hostname === dest.hostname ? 'same-origin' : 'cross-site';
+      } catch (e) { /* leave as 'none' */ }
+    }
+    headers.set('sec-fetch-site', fetchSite);
+    headers.set('sec-fetch-mode', request.headers.get('sec-fetch-mode') || 'navigate');
     headers.set('sec-fetch-dest', request.headers.get('sec-fetch-dest') || 'document');
   }
   // Form posts need a same-origin Origin or many CSRF filters reject them.
@@ -1442,6 +1452,18 @@ function buildUpstreamHeaders(request, target, jar, accessKey, cookieString) {
   if (nonGet) headers.set('origin', dest.origin);
   // Also ensure Referer is set for POSTs — Instagram checks it for CSRF.
   if (nonGet && !headers.has('referer')) headers.set('referer', dest.origin + '/');
+  
+  /* Instagram login: if the page failed to set x-csrftoken, try to extract it from
+     the jar's csrftoken cookie and add it as a header. */
+  if (dest.hostname.includes('instagram.com') && nonGet) {
+    const jarCsrf = jarHeader(jar, dest.hostname, dest.pathname, true);
+    if (jarCsrf) {
+      const csrfMatch = jarCsrf.match(/csrftoken=([^;\s]+)/);
+      if (csrfMatch && !headers.has('x-csrftoken')) {
+        headers.set('x-csrftoken', csrfMatch[1]);
+      }
+    }
+  }
 
   headers.set('upgrade-insecure-requests', '1');
 
