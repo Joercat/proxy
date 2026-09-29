@@ -604,8 +604,32 @@ async function jarSave(env, jar) {
 
 function getSetCookies(headers) {
   try { if (typeof headers.getSetCookie === 'function') return headers.getSetCookie(); } catch { /* older runtime */ }
-  const single = headers.get('set-cookie');
-  return single ? [single] : [];
+  const cookies = [];
+  try {
+    /* Headers can contain multiple Set-Cookie; headers.get only returns the first.
+       headers.getSetCookie() returns all, but if that is missing we need to
+       enumerate. Some runtimes expose headers as an iterable of [name, value]. */
+    if (typeof headers.forEach === 'function') {
+      headers.forEach(function(value, name) {
+        if (name.toLowerCase() === 'set-cookie') cookies.push(value);
+      });
+    } else {
+      /* Fallback: try to get all via entries() */
+      try {
+        const entries = headers.entries ? headers.entries() : [];
+        for (const [name, value] of entries) {
+          if (String(name).toLowerCase() === 'set-cookie') cookies.push(value);
+        }
+      } catch (e2) {
+        const single = headers.get('set-cookie');
+        if (single) cookies.push(single);
+      }
+    }
+  } catch (e) {
+    const single = headers.get('set-cookie');
+    if (single) cookies.push(single);
+  }
+  return cookies;
 }
 
 /* ==========================================================================
